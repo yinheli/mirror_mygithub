@@ -1,0 +1,5 @@
+{
+  "user": "your_github_username",
+  "token": "your_github_token",
+  "repo_root_dir": "git_repo_dir"
+}
