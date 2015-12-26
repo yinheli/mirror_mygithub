@@ -9,6 +9,8 @@ import (
 	"net/http"
 	"os"
 	"os/exec"
+	"strings"
+	"time"
 )
 
 var (
@@ -81,33 +83,52 @@ func main() {
 
 }
 
-func fetchApiContent(uri string) []byte {
+func fetchApiContent(uri string) (reps []Repo) {
 	client := &http.Client{}
 
-	req, err := http.NewRequest("GET", github_api+uri, nil)
-	if err != nil {
-		panic(err)
+	api := github_api + uri
+
+	reps = make([]Repo, 0)
+
+	for {
+		lg.Printf("fetch api: %s", api)
+		req, err := http.NewRequest("GET", api, nil)
+		if err != nil {
+			panic(err)
+		}
+
+		req.SetBasicAuth(cfg.User, cfg.Token)
+		rsp, err := client.Do(req)
+		if err != nil {
+			lg.Fatalf("fetch api %v response error %v", uri, err)
+			return
+		}
+		defer rsp.Body.Close()
+
+		if rsp.StatusCode != 200 {
+			lg.Fatalf("fetch api %v response not 200 (status: %v, msg: %v)", uri, rsp.StatusCode, rsp.Status)
+			return
+		}
+
+		link := strings.Split(strings.Split(rsp.Header.Get("Link"), ",")[0], ";")
+
+		api = link[0][1 : len(link[0])-1]
+
+		content, err := ioutil.ReadAll(rsp.Body)
+		if err != nil {
+			panic(err)
+		}
+
+		for _, r := range parseRepo(content) {
+			reps = append(reps, r)
+		}
+
+		if !strings.Contains(link[1], "next") {
+			break
+		}
 	}
 
-	req.SetBasicAuth(cfg.User, cfg.Token)
-	rsp, err := client.Do(req)
-	if err != nil {
-		lg.Fatalf("fetch api %v response error %v", uri, err)
-		return nil
-	}
-	defer rsp.Body.Close()
-
-	if rsp.StatusCode != 200 {
-		lg.Fatalf("fetch api %v response not 200 (status: %v, msg: %v)", uri, rsp.StatusCode, rsp.Status)
-		return nil
-	}
-
-	content, err := ioutil.ReadAll(rsp.Body)
-	if err != nil {
-		panic(err)
-	}
-
-	return content
+	return
 }
 
 func parseRepo(content []byte) (repos []Repo) {
@@ -118,27 +139,31 @@ func parseRepo(content []byte) (repos []Repo) {
 	return
 }
 
-func doExec(cmd *exec.Cmd) {
-	cmd.Stdout = os.Stdout
-	cmd.Stderr = os.Stderr
-
+func doExec(name string, arg ...string) {
 	for i := 0; i < 20; i++ {
+		cmd := exec.Command(name, arg...)
+		cmd.Stdout = os.Stdout
+		cmd.Stderr = os.Stderr
+
 		err := cmd.Run()
 		if err != nil {
 			lg.Printf("[error] cmd run error %v, error: %v", cmd, err)
+			lg.Printf("[retry] try rerun cmd: %v", cmd)
+			time.Sleep(time.Millisecond * 200)
 			continue
 		} else {
 			break
 		}
 
-		lg.Printf("[retry] try rerun cmd: %v", cmd)
 	}
 
 }
 
 func syncRepos(rootDir, api_uri string) {
-	lg.Printf("sync repos.... %v", rootDir)
-	for _, repo := range parseRepo(fetchApiContent(api_uri)) {
+	lg.Printf("sync repos.... rootDir:%s, api_uri: %s", rootDir, api_uri)
+	repos := fetchApiContent(api_uri)
+	lg.Printf("api_uri: %s, repo count: %v", api_uri, len(repos))
+	for _, repo := range repos {
 		lg.Printf("sync repo: %v, git url: %v", repo.FullName, repo.SSHUrl)
 		localDir := fmt.Sprintf("%v/%v", rootDir, repo.FullName)
 		if _, err := os.Stat(localDir); err != nil {
@@ -149,11 +174,11 @@ func syncRepos(rootDir, api_uri string) {
 			}
 
 			lg.Printf("git clone repo: %v", repo.FullName)
-			doExec(exec.Command("git", "clone", repo.SSHUrl, localDir))
+			doExec("git", "clone", repo.SSHUrl, localDir)
 		} else {
 			os.Chdir(localDir)
-			doExec(exec.Command("git", "reset", "--hard"))
-			doExec(exec.Command("git", "pull", "--rebase"))
+			doExec("git", "reset", "--hard")
+			doExec("git", "pull", "--rebase")
 		}
 	}
 }
