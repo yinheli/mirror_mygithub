@@ -1,9 +1,11 @@
 package main
 
 import (
+	"bytes"
 	"encoding/json"
 	"flag"
 	"fmt"
+	"io"
 	"io/ioutil"
 	"log"
 	"net/http"
@@ -126,6 +128,10 @@ func fetchApiContent(uri string) (reps []Repo) {
 		if !strings.Contains(link[1], "next") {
 			break
 		}
+
+		lg.Println("ratelimit 30/min, sleep for a while")
+		time.Sleep(time.Second * 2)
+
 	}
 
 	return
@@ -139,14 +145,38 @@ func parseRepo(content []byte) (repos []Repo) {
 	return
 }
 
+type pipeWriter struct {
+	w io.Writer
+	c *bytes.Buffer
+}
+
+func (p pipeWriter) Write(data []byte) (n int, err error) {
+	p.c.Write(data)
+	return p.w.Write(data)
+}
+
+func (p pipeWriter) String() string {
+	return p.c.String()
+}
+
 func doExec(name string, arg ...string) {
 	for i := 0; i < 20; i++ {
+
+		stdout := pipeWriter{w: os.Stdout, c: &bytes.Buffer{}}
+		stderr := pipeWriter{w: os.Stderr, c: &bytes.Buffer{}}
+
 		cmd := exec.Command(name, arg...)
-		cmd.Stdout = os.Stdout
-		cmd.Stderr = os.Stderr
+		cmd.Stdout = stdout
+		cmd.Stderr = stderr
 
 		err := cmd.Run()
+
 		if err != nil {
+
+			if strings.Contains(stderr.String(), "DMCA takedown") {
+				break
+			}
+
 			lg.Printf("[error] cmd run error %v, error: %v", cmd, err)
 			lg.Printf("[retry] try rerun cmd: %v", cmd)
 			time.Sleep(time.Millisecond * 200)
