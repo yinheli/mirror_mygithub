@@ -83,6 +83,8 @@ func main() {
 	syncRepos(fmt.Sprintf("%v/users", cfg.RepoRootDir), user_repos_uri)
 	syncRepos(fmt.Sprintf("%v/starred", cfg.RepoRootDir), starred_uri)
 
+	lg.Println("finished")
+
 }
 
 func fetchApiContent(uri string) (reps []Repo) {
