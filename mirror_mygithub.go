@@ -12,6 +12,7 @@ import (
 	"os"
 	"os/exec"
 	"strings"
+	"syscall"
 	"time"
 )
 
@@ -152,9 +153,10 @@ type pipeWriter struct {
 	c *bytes.Buffer
 }
 
-func (p pipeWriter) Write(data []byte) (n int, err error) {
+func (p pipeWriter) Write(data []byte) (int, error) {
 	p.c.Write(data)
-	return p.w.Write(data)
+	p.w.Write([]byte("   " + string(bytes.TrimSpace(data)) + "\n"))
+	return len(data), nil
 }
 
 func (p pipeWriter) String() string {
@@ -179,7 +181,18 @@ func doExec(name string, arg ...string) {
 				break
 			}
 
-			lg.Printf("[error] cmd run error %v, error: %v", cmd, err)
+			if exiterr, ok := err.(*exec.ExitError); ok {
+				// The program has exited with an exit code != 0
+				// There is no plattform independent way to retrieve
+				// the exit code, but the following will work on Unix
+				if status, ok := exiterr.Sys().(syscall.WaitStatus); ok {
+					if status.ExitStatus() == 1 {
+						break
+					}
+				}
+			}
+
+			lg.Printf("[error] cmd run error cmd:%v arg:%v, error: %v", name, arg, err)
 			lg.Printf("[retry] try rerun cmd: %v", cmd)
 			time.Sleep(time.Millisecond * 200)
 			continue
